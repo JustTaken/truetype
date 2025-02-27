@@ -24,7 +24,7 @@ pub const Loca = struct {
 
     pub fn new(table: TableDirectory, head: Head, bytes: []u8) error{VersionNotHandled, OutOfMemory}!Loca {
         var self: Loca = undefined;
-        self.reader = ByteReader.new(bytes[table.offset..], null);
+        self.reader = ByteReader.new(bytes[table.offset..]);
 
         const format = std.meta.intToEnum(Version, head.index_to_loc_format) catch return error.VersionNotHandled;
 

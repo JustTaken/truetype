@@ -2,7 +2,7 @@ const Fixed = @import("fixed.zig").Fixed;
 const TableDirectory = @import("table.zig").TableDirectory;
 const ByteReader = @import("reader.zig").ByteReader;
 
-pub const Hhea = extern struct {
+pub const Hhea = packed struct {
     version: Fixed,
     ascent: i16,
     descent: i16,
@@ -22,7 +22,7 @@ pub const Hhea = extern struct {
     num_of_long_hor_metrics: u16,
 
     pub fn new(table: TableDirectory, bytes: []u8) error{Version, Read}!Hhea {
-        var reader = ByteReader.new(bytes[table.offset..], null);
+        var reader = ByteReader.new(bytes[table.offset..]);
         const self = reader.readType(Hhea);
 
         if (self.version.float != 0 or self.version.int != 1) return error.Version;

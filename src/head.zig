@@ -22,7 +22,7 @@ pub const Head = packed struct {
     glyph_data_format: i16,
 
     pub fn new(table: TableDirectory, bytes: []u8) error{Version, Magic}!Head {
-        var reader = ByteReader.new(bytes[table.offset..], null);
+        var reader = ByteReader.new(bytes[table.offset..]);
         const self = reader.readType(Head);
 
         if (self.version.float != 0 or self.version.int != 1) return error.Version;

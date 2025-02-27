@@ -4,28 +4,24 @@ const builtin = @import("builtin");
 pub const ByteReader = struct {
     bytes: []u8,
     index: u32,
-    allocator: ?std.mem.Allocator,
 
-    pub fn new(bytes: []u8, allocator: ?std.mem.Allocator) ByteReader {
+    pub fn new(bytes: []u8) ByteReader {
         return .{
             .bytes = bytes,
             .index = 0,
-            .allocator = allocator,
         };
     }
 
-    pub fn readSlice(self: *ByteReader, T: type, count: u32) error{OutOfMemory}![]T {
-        const allocator = self.allocator orelse return error.OutOfMemory;
+    pub fn readSlice(self: *ByteReader, T: type, count: u32) error{OutOfMemory}![]align(1) T {
         defer self.index += sizeof(T) * count;
 
         const values = std.mem.bytesAsSlice(T, self.bytes[self.index..self.index + sizeof(T) * count]);
-        const res = try allocator.alloc(T, count);
 
         for (values, 0..) |value, i| {
-            res[i]= std.mem.bigToNative(T, value);
+            values[i] = std.mem.bigToNative(T, value);
         }
 
-        return res;
+        return values;
     }
 
     pub fn readValue(self: *ByteReader, T: type) T {
@@ -72,21 +68,19 @@ pub const ByteReader = struct {
         return value;
     }
 
-    pub fn readTypeSlice(self: *ByteReader, T: type, count: u32) error{OutOfMemory}![]T {
-        const allocator = self.allocator orelse return error.OutOfMemory;
-
+    pub fn readTypeSlice(self: *ByteReader, T: type, count: u32) error{OutOfMemory}![]align(1) T {
         defer self.index += sizeof(T) * count;
         const values = std.mem.bytesAsSlice(T, self.bytes[self.index..self.index + sizeof(T) * count]);
-        const res = try allocator.alloc(T, count);
-        @memcpy(res, values);
 
         if (builtin.cpu.arch.endian() != .big) {
-            for (res) |*value| {
-                std.mem.byteSwapAllFields(T, @alignCast(value));
+            for (values) |*value| {
+                var v: T = value.*;
+                std.mem.byteSwapAllFields(T, &v);
+                value.* = v;
             }
         }
 
-        return res;
+        return values;
     }
 
     fn sizeof(T: type) u32 {

@@ -2,7 +2,7 @@ const TableDirectory = @import("table.zig").TableDirectory;
 const ByteReader = @import("reader.zig").ByteReader;
 const Fixed = @import("fixed.zig").Fixed;
 
-pub const MaxP = extern struct {
+pub const MaxP = packed struct {
     version: Fixed,
     num_glyphs: u16,
     max_points: u16,
@@ -20,7 +20,7 @@ pub const MaxP = extern struct {
     max_component_depth: u16,
 
     pub fn new(table: TableDirectory, bytes: []u8) error{Version}!MaxP {
-        var reader = ByteReader.new(bytes[table.offset..], null);
+        var reader = ByteReader.new(bytes[table.offset..]);
         const self = reader.readType(MaxP);
 
         if (self.version.float != 0 or self.version.int != 1) return error.Version;

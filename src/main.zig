@@ -22,9 +22,10 @@ const TableTag = enum  {
     @"post",
     @"hmtx",
 
-    fn from_bytes(bytes: [4]u8) ?TableTag {
+    fn new(tag: u32) ?TableTag {
+        const bytes = std.mem.asBytes(&std.mem.nativeToBig(u32, tag));
         inline for (@typeInfo(TableTag).Enum.fields) |field| {
-            if (std.mem.eql(u8, field.name, &bytes)) {
+            if (std.mem.eql(u8, field.name, bytes)) {
                 return @enumFromInt(field.value);
             }
         }
@@ -48,20 +49,20 @@ pub fn main() !void {
 
     const content = try readFile("assets/hack.ttf", allocator);
 
-    var reader = ByteReader.new(content, allocator);
+    var reader = ByteReader.new(content);
 
     const offset_table = reader.readType(OffsetTable);
     const tables = try reader.readTypeSlice(TableDirectory, offset_table.num_tables);
     var tables_mapping = std.EnumMap(TableTag, TableDirectory).init(.{});
 
-    for (tables) |table| tables_mapping.put(TableTag.from_bytes(table.tag) orelse continue, table);
+    for (tables) |table| tables_mapping.put(TableTag.new(table.tag) orelse continue, table);
 
-    const cmap = try Cmap.new(tables_mapping.get(.@"cmap") orelse return error.Cmap, content, allocator);
+    const cmap = try Cmap.new(tables_mapping.get(.@"cmap") orelse return error.Cmap, content);
     const maxp = try MaxP.new(tables_mapping.get(.@"maxp") orelse return error.Maxp, content);
     const head = try Head.new(tables_mapping.get(.@"head") orelse return error.Head, content);
     const hhea = try Hhea.new(tables_mapping.get(.@"hhea") orelse return error.Hhea, content);
     const loca = try Loca.new(tables_mapping.get(.@"loca") orelse return error.Loca, head, content);
-    const glyf = Glyf.new(tables_mapping.get(.@"glyf") orelse return error.Glyf, cmap, loca, maxp, content);
+    const glyf = Glyf.new(tables_mapping.get(.@"glyf") orelse return error.Glyf, cmap, loca, maxp, content, allocator);
 
     const hmtx = tables_mapping.get(.@"hmtx") orelse return error.Hmtx;
     const name = tables_mapping.get(.@"name") orelse return error.Name;
@@ -72,9 +73,9 @@ pub fn main() !void {
     _ = name;
     _ = post;
 
-    for ('A'..'Z') |c| {
-        glyf.get(@intCast(c));
-    }
+    // for ('A'..'B') |c| {
+    try glyf.get(@intCast('A'));
+    // }
 }
 
 fn readFile(path: []const u8, allocator: std.mem.Allocator) error{Read, Seek, Open, OutOfMemory}![]u8 {
