@@ -1,11 +1,15 @@
 const std = @import("std");
 
 const ByteReader = @import("reader.zig").ByteReader;
-
 const TableDirectory = @import("table.zig").TableDirectory;
+
 const Loca = @import("loca.zig").Loca;
 const Cmap = @import("cmap.zig").Cmap;
 const MaxP = @import("maxp.zig").MaxP;
+
+const DIV: u16 = 1;
+const MAX_RAD: u32 = 3;
+const INTERPOLATIONS: u32 = 6;
 
 const GlyphKind = enum(i16) {
     Simple,
@@ -149,13 +153,16 @@ const SimpleGlyph = struct {
     };
 
     fn coordinate_from_flag(reader: *ByteReader, short: bool, same: bool) i16 {
-        if (short) {
-            const value: i16 = @intCast(reader.readValue(u8));
-
-            return if (same) value else -value;
-        }
-
-        return if (same) 0 else reader.readValue(i16);
+        return switch (short) {
+            true => switch (same) {
+                true => @intCast(reader.readValue(u8)),
+                false => -@as(i16, @intCast(reader.readValue(u8))),
+            },
+            false => switch (same) {
+                true => 0,
+                false => reader.readValue(i16),
+            }
+        };
     }
 
     pub fn new(
@@ -167,7 +174,6 @@ const SimpleGlyph = struct {
         self.width = @as(u32, @intCast(description.x_max - description.x_min)) / DIV + 1;
         self.height = @as(u32, @intCast(description.y_max - description.y_min)) / DIV + 1;
 
-        print("width: {}, height: {}\n", .{self.width, self.height});
         self.bitmap = try allocator.alloc(u8, self.width * self.height);
         @memset(self.bitmap, 0);
 
@@ -191,14 +197,15 @@ const SimpleGlyph = struct {
             const flag: Flag = @bitCast(reader.readValue(u8));
 
             flags[point_count - count] = flag;
+            std.debug.assert(!flag.reserved0 and !flag.reserved1);
 
             if (flag.repeat) {
                 var repeat_count = reader.readValue(u8);
                 count -= repeat_count;
 
                 while (repeat_count > 0) {
-                    flags[point_count - count - repeat_count] = flag;
                     repeat_count -= 1;
+                    flags[point_count - count - repeat_count] = flag;
                 }
             }
 
@@ -207,7 +214,7 @@ const SimpleGlyph = struct {
 
         var accX: i16 = 0;
         for (flags, 0..) |flag, i| {
-            accX += coordinate_from_flag(reader, flag.x_short_vector, flag.x_is_same);
+            accX +%= coordinate_from_flag(reader, flag.x_short_vector, flag.x_is_same);
             coodinate_points[i].x = accX;
 
             on_curve[i] = flag.on_curve;
@@ -215,7 +222,7 @@ const SimpleGlyph = struct {
 
         var accY: i16 = 0;
         for (flags, 0..) |flag, i| {
-            accY += coordinate_from_flag(reader, flag.y_short_vector, flag.y_is_same);
+            accY +%= coordinate_from_flag(reader, flag.y_short_vector, flag.y_is_same);
             coodinate_points[i].y = accY;
         }
 
@@ -225,7 +232,7 @@ const SimpleGlyph = struct {
 
             defer count = end;
 
-            const outline = try Bezier.plot(coodinate_points[count..end], on_curve[count..end], 4, allocator);
+            const outline = try Bezier.plot(coodinate_points[count..end], on_curve[count..end], INTERPOLATIONS, allocator);
 
             for (0..outline.len) |k| {
                 self.writeDot(outline[k].shift(-description.x_min, -description.y_min).scale(DIV), MAX_RAD);
@@ -236,13 +243,9 @@ const SimpleGlyph = struct {
         return self;
     }
 
-    const DIV: u16 = 2;
-    const MAX_RAD: u32 = 3;
-
     fn writeDot(self: *SimpleGlyph, pos: Point, rad: u32) void {
-        print("pos: ({}, {})\n", .{pos.x, pos.y});
-
         self.addAndWrite(pos.x, pos.y, 0, 0, 255);
+
         for (1..rad + 1) |r| {
             const i_r: i32 = @intCast(r);
 
@@ -251,6 +254,7 @@ const SimpleGlyph = struct {
 
             self.addAndWrite(pos.x, pos.y, 0, i_r, 255);
             self.addAndWrite(pos.x, pos.y, 0, -i_r, 255);
+
             for (1..r + 1) |k| {
                 const ii: i32 = @intCast(k);
 
@@ -265,18 +269,16 @@ const SimpleGlyph = struct {
                 self.addAndWrite(pos.x, pos.y, -ii, -i_r, 255);
             }
         }
-
-        print("\n", .{});
     }
 
     fn writeLine(self: *SimpleGlyph, first: Point, second: Point) void {
+        // std.debug.print("writing line: {} -> {}\n", .{first, second});
         const Independent = enum { X, Y };
 
         const dx = second.x - first.x;
         const dy = second.y - first.y;
 
         if (dx == 0 and dy == 0) return;
-
 
         var coef: f32 = undefined;
         const ind: Independent = if (abs(dx) > abs(dy)) .X else .Y;
@@ -299,11 +301,7 @@ const SimpleGlyph = struct {
         const r_x = x + deltaX;
         const r_y = y + deltaY;
 
-        if (r_x < 0 or r_y < 0 or r_y >= self.height or r_x >= self.width) {
-            print("!({} {}), ", .{r_x, r_y});
-            return;
-        }
-        print("({} {}), ", .{r_x, r_y});
+        if (r_x < 0 or r_y < 0 or r_y >= self.height or r_x >= self.width) return;
 
         const u_x: u32 = @intCast(r_x);
         const u_y: u32 = @intCast(r_y);
@@ -355,7 +353,6 @@ pub const Glyf = struct {
             .Compound => unreachable,
             .None => unreachable,
         }
-
     }
 };
 
@@ -364,21 +361,12 @@ fn binomial(numerator: usize, denumerator: usize) f32 {
     const d = fac(denumerator);
     const dif = fac(numerator - denumerator);
 
-    const f_numerator: f32 = @floatFromInt(n);
-    const f_denumerator: f32 = @floatFromInt(d * dif);
-
-    return f_numerator / f_denumerator;
+    return @as(f32, @floatFromInt(n)) / @as(f32, @floatFromInt(d * dif));
 }
 
 fn fac(number: usize) usize {
     if (number <= 1) return 1;
     return fac(number - 1) * number;
-}
-
-fn print(comptime fmt: []const u8, args: anytype) void {
-    const do_print = false;
-    if (!do_print) return;
-    std.debug.print(fmt, args);
 }
 
 fn max(first: isize, second: isize) isize {

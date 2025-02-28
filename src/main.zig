@@ -43,11 +43,17 @@ const OffsetTable = packed struct {
 };
 
 pub fn main() !void {
-    const bytes = try std.heap.page_allocator.alloc(u8, 1024 * 1024 * 20);
+    const bytes = try std.heap.page_allocator.alloc(u8, 1024 * 1024 * 50);
     var fixedAllocator = std.heap.FixedBufferAllocator.init(bytes);
     const allocator = fixedAllocator.allocator();
 
-    const content = try readFile("assets/hack.ttf", allocator);
+    var args = try std.process.argsWithAllocator(allocator);
+
+    _ = args.next() orelse return error.MissingExeName;
+    const path = args.next() orelse return error.MissingArgument;
+    const chars = args.next() orelse return error.MissingChars;
+
+    const content = try readFile(path, allocator);
 
     var reader = ByteReader.new(content);
 
@@ -73,36 +79,48 @@ pub fn main() !void {
     _ = name;
     _ = post;
 
-    try write(&glyf, 'B');
+    var writerFixedAllocator = std.heap.FixedBufferAllocator.init(try allocator.alloc(u8, fixedAllocator.buffer.len - fixedAllocator.end_index - 20));
+    const writer_allocator = writerFixedAllocator.allocator();
+
+    for (chars) |c| {
+        defer writerFixedAllocator.reset();
+
+        const char: u8 = @intCast(c);
+        std.debug.print("writing: {c} ", .{char});
+        var file_path_array: [50]u8 = undefined;
+        const file_path = try std.fmt.bufPrint(&file_path_array, "images/{c}.ppm", .{char});
+
+        try write_to_file(file_path, try write_to_buffer(&glyf, char, writer_allocator));
+    }
 }
 
-fn write(glyf: *Glyf, char: u8) !void {
+const flag = true;
+
+fn write_to_buffer(glyf: *Glyf, char: u8, allocator: std.mem.Allocator) ![]u8 {
+    const start = try std.time.Instant.now();
     const glyph = try glyf.get(char);
+    const glyph_end = try std.time.Instant.now();
+    const buffer = try allocator.alloc(u8, glyph.bitmap.len * (3 * 3 + 3) + 100);
 
-    const flag = false;
+    const header = try std.fmt.bufPrint(buffer, "P3\n{} {}\n255\n", .{glyph.width, glyph.height});
+    var len: usize = header.len;
 
+    for (glyph.bitmap) |b| {
+        const writer = try std.fmt.bufPrint(buffer[len..], "{} {} {}\n", .{b, b, b});
+        len += writer.len;
+    }
+
+    const end = try std.time.Instant.now();
+    std.debug.print("glyph: {} ns, total: {} ns\n", .{glyph_end.since(start), end.since(start)});
+
+    return buffer[0..len];
+}
+
+fn write_to_file(path: []const u8, buffer: []u8) !void {
     if (flag) {
-        for (0..glyph.height) |y| {
-            for (0..glyph.width) |x| {
-                const b = glyph.bitmap[y * glyph.width + x];
-                if (b == 0) continue;
-
-                std.debug.print("{d} ", .{b});
-            }
-            std.debug.print("\n", .{});
-        }
-    } else {
-        const file = std.fs.cwd().createFile("assets/output.ppm", .{}) catch return error.Open;
+        const file = std.fs.cwd().createFile(path, .{}) catch return error.Open;
         defer file.close();
-
-        var buffer: [100]u8 = undefined;
-        const header = try std.fmt.bufPrint(&buffer, "P3\n{} {}\n255\n", .{glyph.width, glyph.height});
-        try file.writeAll(header);
-
-        for (glyph.bitmap) |b| {
-            const writer = try std.fmt.bufPrint(&buffer, "{} {} {}\n", .{b, b, b});
-            try file.writeAll(writer);
-        }
+        try file.writeAll(buffer);
     }
 }
 
