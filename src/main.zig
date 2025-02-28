@@ -105,9 +105,12 @@ fn write_to_buffer(glyf: *Glyf, char: u8, allocator: std.mem.Allocator) ![]u8 {
     const header = try std.fmt.bufPrint(buffer, "P3\n{} {}\n255\n", .{glyph.width, glyph.height});
     var len: usize = header.len;
 
-    for (glyph.bitmap) |b| {
-        const writer = try std.fmt.bufPrint(buffer[len..], "{} {} {}\n", .{b, b, b});
-        len += writer.len;
+    for (0..glyph.height) |y| {
+        for (0..glyph.width) |x| {
+            const b = glyph.bitmap[(glyph.height - y - 1) * glyph.width + x];
+            const writer = try std.fmt.bufPrint(buffer[len..], "{} {} {}\n", .{b, b, b});
+            len += writer.len;
+        }
     }
 
     const end = try std.time.Instant.now();

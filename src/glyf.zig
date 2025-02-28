@@ -9,7 +9,7 @@ const MaxP = @import("maxp.zig").MaxP;
 
 const DIV: u16 = 1;
 const MAX_RAD: u32 = 3;
-const INTERPOLATIONS: u32 = 6;
+const INTERPOLATIONS: u32 = 2;
 
 const GlyphKind = enum(i16) {
     Simple,
@@ -57,55 +57,45 @@ const SimpleGlyph = struct {
     };
 
     const Bezier = struct {
-        points: []Point,
-        len: usize,
-
-        fn plot(points: []Point, on_curve: []bool, interpolations: u32, allocator: std.mem.Allocator) error{OutOfMemory}![]Point {
-            var self: Bezier = undefined;
-            self.points = try allocator.alloc(Point, points.len * 3);
-            self.len = 0;
-
-            const line_points = try allocator.alloc(Point, 20);
-            defer allocator.free(line_points);
+        fn contour_outline(raw_points: []Point, on_curve: []bool, interpolations: u32, allocator: std.mem.Allocator) error{OutOfMemory}![]Point {
+            var line_points = try std.ArrayList(Point).initCapacity(allocator, 20);
+            var points = try std.ArrayList(Point).initCapacity(allocator, raw_points.len);
 
             var i: usize = 0;
             var total_count: usize = 0;
-            while (total_count < points.len) {
-                while (!on_curve[i]) : (i = (i + 1) % points.len) {}
+            while (total_count < raw_points.len) {
+                while (!on_curve[i]) : (i = (i + 1) % raw_points.len) {}
 
-                var point_count: u32 = 0;
+                line_points.clearRetainingCapacity();
 
-                line_points[0] = points[i];
-                point_count += 1;
+                try line_points.append(raw_points[i]);
 
-                i = (i + 1) % points.len;
+                i = (i + 1) % raw_points.len;
 
                 while (!on_curve[i]) {
-                    line_points[point_count] = points[i];
-                    point_count += 1;
-                    i = (i + 1) % points.len;
+                    try line_points.append(raw_points[i]);
+                    i = (i + 1) % raw_points.len;
                 }
 
-                line_points[point_count] = points[i];
-                point_count += 1;
+                try line_points.append(raw_points[i]);
 
-                self.interpolate(line_points[0..point_count], interpolations);
+                try interpolate(&points, line_points.items, interpolations);
 
-                total_count += point_count - 1;
+                total_count += line_points.items.len - 1;
             }
 
-            return self.points[0..self.len];
+            return points.items;
         }
 
-        fn interpolate(self: *Bezier, points: []Point, interpolations: u32) void {
-            if (points.len == 2) {
-                self.insert_point(points[0]);
+        fn interpolate(points: *std.ArrayList(Point), raw_points: []Point, interpolations: u32) error{OutOfMemory}!void {
+            if (raw_points.len == 2) {
+                try points.append(raw_points[0]);
 
                 return;
             }
 
             const delta: f32 = 1.0 / @as(f32, @floatFromInt(interpolations));
-            const n = points.len - 1;
+            const n = raw_points.len - 1;
 
             var t: f32 = 0.0;
             for (0..interpolations) |_| {
@@ -113,20 +103,15 @@ const SimpleGlyph = struct {
 
                 var point = Point { .x = 0, .y = 0};
 
-                for (0..points.len) |i| {
-                    const fs = calculate_sum(t, @intCast(n - i), @intCast(i), binomial(n, i), points[i]);
+                for (0..raw_points.len) |i| {
+                    const fs = calculate_sum(t, @intCast(n - i), @intCast(i), binomial(n, i), raw_points[i]);
 
                     point.x += @intFromFloat(fs[0]);
                     point.y += @intFromFloat(fs[1]);
                 }
 
-                self.insert_point(point);
+                try points.append(point);
             }
-        }
-
-        fn insert_point(self: *Bezier, point: Point) void {
-            defer self.len += 1;
-            self.points[self.len] = point;
         }
 
         fn calculate_sum(t: f32, t_neg_exp: u32, t_exp: u32, cof: f32, point: Point) [2]f32 {
@@ -232,7 +217,7 @@ const SimpleGlyph = struct {
 
             defer count = end;
 
-            const outline = try Bezier.plot(coodinate_points[count..end], on_curve[count..end], INTERPOLATIONS, allocator);
+            const outline = try Bezier.contour_outline(coodinate_points[count..end], on_curve[count..end], INTERPOLATIONS, allocator);
 
             for (0..outline.len) |k| {
                 self.writeDot(outline[k].shift(-description.x_min, -description.y_min).scale(DIV), MAX_RAD);
