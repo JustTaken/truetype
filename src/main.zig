@@ -62,7 +62,7 @@ pub fn main() !void {
     const head = try Head.new(tables_mapping.get(.@"head") orelse return error.Head, content);
     const hhea = try Hhea.new(tables_mapping.get(.@"hhea") orelse return error.Hhea, content);
     const loca = try Loca.new(tables_mapping.get(.@"loca") orelse return error.Loca, head, content);
-    const glyf = Glyf.new(tables_mapping.get(.@"glyf") orelse return error.Glyf, cmap, loca, maxp, content, allocator);
+    var glyf = Glyf.new(tables_mapping.get(.@"glyf") orelse return error.Glyf, cmap, loca, maxp, content, std.heap.FixedBufferAllocator.init(try allocator.alloc(u8, 3 * 1024 * 1024)));
 
     const hmtx = tables_mapping.get(.@"hmtx") orelse return error.Hmtx;
     const name = tables_mapping.get(.@"name") orelse return error.Name;
@@ -73,13 +73,43 @@ pub fn main() !void {
     _ = name;
     _ = post;
 
-    // for ('A'..'B') |c| {
-    try glyf.get(@intCast('A'));
-    // }
+    try write(&glyf, 'B');
+}
+
+fn write(glyf: *Glyf, char: u8) !void {
+    const glyph = try glyf.get(char);
+
+    const flag = false;
+
+    if (flag) {
+        for (0..glyph.height) |y| {
+            for (0..glyph.width) |x| {
+                const b = glyph.bitmap[y * glyph.width + x];
+                if (b == 0) continue;
+
+                std.debug.print("{d} ", .{b});
+            }
+            std.debug.print("\n", .{});
+        }
+    } else {
+        const file = std.fs.cwd().createFile("assets/output.ppm", .{}) catch return error.Open;
+        defer file.close();
+
+        var buffer: [100]u8 = undefined;
+        const header = try std.fmt.bufPrint(&buffer, "P3\n{} {}\n255\n", .{glyph.width, glyph.height});
+        try file.writeAll(header);
+
+        for (glyph.bitmap) |b| {
+            const writer = try std.fmt.bufPrint(&buffer, "{} {} {}\n", .{b, b, b});
+            try file.writeAll(writer);
+        }
+    }
 }
 
 fn readFile(path: []const u8, allocator: std.mem.Allocator) error{Read, Seek, Open, OutOfMemory}![]u8 {
     const file = std.fs.cwd().openFile(path, .{}) catch return error.Open;
+    defer file.close();
+
     const end = file.getEndPos() catch return error.Seek;
     const content = try allocator.alloc(u8, end);
 
