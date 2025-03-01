@@ -9,7 +9,8 @@ const MaxP = @import("maxp.zig").MaxP;
 
 const DIV: u16 = 1;
 const MAX_RAD: u32 = 3;
-const INTERPOLATIONS: u32 = 5;
+const INTERPOLATIONS: u32 = 8;
+const FILL_BYTE: u8 = 255;
 
 const GlyphKind = enum(i16) {
     Simple,
@@ -132,36 +133,26 @@ const SimpleGlyph = struct {
 
         fn findXIntersections(curve: []Point, height: i16, allocator: std.mem.Allocator) error{OutOfMemory}![]Intersection {
             var intersections = try std.ArrayList(Intersection).initCapacity(allocator, 10);
+            // std.debug.print("trying: {}\n", .{height});
 
-            for (0..curve.len) |i| {
-                const current = curve[i];
+            var i: usize = 0;
+            while (i < curve.len) : (i += 1) {
+                const prev = curve[i];
                 const next = curve[(i + 1) % curve.len];
-                var n = next;
-                var c = current;
+                var current = next;
 
-                // if (next.y == current.y) continue;
+                while (current.y == height) {
+                    i += 1;
+                    current = curve[(i + 1) % curve.len];
+                }
 
-                // std.debug.print("trying: x {}, y: {}, next x: {}, y {}\n", .{current.x, current.y, next.x, next.y});
-                if (n.y == height) n = curve[(i + 2) % curve.len];
-                if (c.y == height) c = curve[if (i == 0) curve.len - 1 else i - 1];
+                if (current.y <= height and prev.y <= height) continue;
+                if (current.y >= height and prev.y >= height) continue;
 
-                if (c.y <= height and n.y <= height) continue;
-                if (c.y >= height and n.y >= height) continue;
+                const coef = @as(f32, @floatFromInt(height - prev.y)) / @as(f32, @floatFromInt(next.y - prev.y));
+                const x = std.math.lerp(@as(f32, @floatFromInt(prev.x)), @as(f32, @floatFromInt(next.x)), coef);
 
-                const coef = if (next.y == current.y) 1.0 else @as(f32, @floatFromInt(height - current.y)) / @as(f32, @floatFromInt(next.y - current.y));
-                const x = std.math.lerp(@as(f32, @floatFromInt(current.x)), @as(f32, @floatFromInt(next.x)), coef);
-
-                // std.debug.print("found x: {} for y: {}, coef: {}, current x: {}, next x: {}, current y: {}, next y: {}\n", .{ x, height, coef, current.x, next.x, current.y, next.y });
-
-                try intersections.append(.{ .x = @intFromFloat(@round(x)), .dir = next.y - current.y });
-
-                // switch (current.y < height) {
-                //     true => {
-                //     },
-                //     false => {
-
-                //     },
-                // }
+                try intersections.append(.{ .x = @intFromFloat(x), .dir = next.y - prev.y });
             }
 
             return intersections.items;
@@ -301,14 +292,15 @@ const SimpleGlyph = struct {
             }
 
             orientations[i] = Bezier.contourOrientation(contours[i]);
-            // std.debug.print("contour: {}, orientation: {}\n", .{ i, orientations[i] });
+
+            for (0..contours[i].len) |k| {
+                // self.writeDot(contours[i][k], MAX_RAD, FILL_BYTE);
+                self.writeLine(contours[i][k], contours[i][(k + 1) % contours[i].len], FILL_BYTE);
+            }
         }
 
         var fixedAllocator = std.heap.FixedBufferAllocator.init(try allocator.alloc(u8, 1024));
         const curveAllocator = fixedAllocator.allocator();
-
-        // const clockwise_xs = try std.ArrayList(i16).initCapacity(allocator, 30);
-        // const counter_clockwise_xs = try std.ArrayList(i16).initCapacity(allocator, 30);
 
         var line_xs = try std.ArrayList(i16).initCapacity(allocator, 30);
         for (0..self.height) |y| {
@@ -328,51 +320,29 @@ const SimpleGlyph = struct {
             }
 
             if (line_xs.items.len == 0) continue;
-            // std.debug.print("len: {}\n", .{line_xs.items.len});
             std.debug.assert(line_xs.items.len % 2 == 0);
-
             std.mem.sort(i16, line_xs.items, .{}, less);
 
             const height: i32 = @intCast(y * self.width);
             for (0..line_xs.items.len / 2) |x| {
                 const index = x * 2;
-                @memset(self.bitmap[@intCast(height + line_xs.items[index])..@intCast(height + line_xs.items[index + 1])], 255);
+
+                @memset(self.bitmap[@intCast(height + line_xs.items[index])..@intCast(height + line_xs.items[index + 1] + 1)], FILL_BYTE);
             }
         }
-        // for (0..outline.len) |k| {
-        //     self.writeDot(outline[k], MAX_RAD, 255);
-        //     self.writeLine(outline[k], outline[(k + 1) % outline.len], 255);
-        // }
 
         return self;
     }
 
-    fn pushIntersection(line_intersections: *std.ArrayList(i16), contour_intersections: []Intersection, orientation: Orientation) error{OutOfMemory}!void {
+    fn pushIntersection(line_intersections: *std.ArrayList(i16), contour_intersections: []Intersection, _: Orientation) error{OutOfMemory}!void {
         if (contour_intersections.len == 0) return;
-        var c_inters = contour_intersections;
-        if (contour_intersections[0].eql(contour_intersections[contour_intersections.len - 1]) and contour_intersections.len > 1) c_inters.len -= 1;
 
-        switch (orientation) {
-            .Clockwise => {
-                var prev: ?Intersection = null;
-                for (c_inters) |i| {
-                    if (prev) |p| {
-                        if (i.eql(p)) continue;
-                    }
+        var prev: ?Intersection = contour_intersections[contour_intersections.len - 1];
+        for (contour_intersections) |i| {
+            if (prev) |p| if (i.eql(p)) continue;
 
-                    try line_intersections.append(i.x);
-                    prev = i;
-                }
-            },
-            .CounterClockwise => {
-                var prev: ?Intersection = null;
-                for (c_inters) |i| {
-                    if (prev) |p| if (i.eql(p)) continue;
-
-                    try line_intersections.append(i.x);
-                    prev = i;
-                }
-            },
+            try line_intersections.append(i.x);
+            prev = i;
         }
     }
 
@@ -405,7 +375,6 @@ const SimpleGlyph = struct {
     }
 
     fn writeLine(self: *SimpleGlyph, first: Point, second: Point, alpha: u8) void {
-        // std.debug.print("writing line: {} -> {}\n", .{first, second});
         const Independent = enum { X, Y };
 
         const dx = second.x - first.x;
@@ -467,8 +436,6 @@ pub const Glyf = struct {
     }
 
     pub fn get(self: *Glyf, char: u16, allocator: std.mem.Allocator) error{OutOfMemory}!SimpleGlyph {
-        // self.allocator.reset();
-
         const index = self.cmap.get_index(char) orelse 0;
 
         std.debug.assert(index <= self.maxp.num_glyphs);
