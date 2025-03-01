@@ -449,7 +449,6 @@ pub const Glyf = struct {
     cmap: Cmap,
     maxp: MaxP,
     bytes: []u8,
-    allocator: std.heap.FixedBufferAllocator,
 
     pub fn new(
         table: TableDirectory,
@@ -457,7 +456,6 @@ pub const Glyf = struct {
         loca: Loca,
         maxp: MaxP,
         bytes: []u8,
-        allocator: std.heap.FixedBufferAllocator,
     ) Glyf {
         return .{
             .table = table,
@@ -465,12 +463,11 @@ pub const Glyf = struct {
             .cmap = cmap,
             .maxp = maxp,
             .bytes = bytes[table.offset..],
-            .allocator = allocator,
         };
     }
 
-    pub fn get(self: *Glyf, char: u16) error{OutOfMemory}!SimpleGlyph {
-        self.allocator.reset();
+    pub fn get(self: *Glyf, char: u16, allocator: std.mem.Allocator) error{OutOfMemory}!SimpleGlyph {
+        // self.allocator.reset();
 
         const index = self.cmap.get_index(char) orelse 0;
 
@@ -482,7 +479,7 @@ pub const Glyf = struct {
         const glyph_description = glyph_reader.readType(GlyphDescription);
 
         switch (GlyphKind.new(glyph_description.number_of_contours)) {
-            .Simple => return try SimpleGlyph.new(glyph_description, &glyph_reader, self.allocator.allocator()),
+            .Simple => return try SimpleGlyph.new(glyph_description, &glyph_reader, allocator),
             .Compound => unreachable,
             .None => unreachable,
         }

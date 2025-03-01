@@ -68,7 +68,7 @@ pub fn main() !void {
     const head = try Head.new(tables_mapping.get(.@"head") orelse return error.Head, content);
     const hhea = try Hhea.new(tables_mapping.get(.@"hhea") orelse return error.Hhea, content);
     const loca = try Loca.new(tables_mapping.get(.@"loca") orelse return error.Loca, head, content);
-    var glyf = Glyf.new(tables_mapping.get(.@"glyf") orelse return error.Glyf, cmap, loca, maxp, content, std.heap.FixedBufferAllocator.init(try allocator.alloc(u8, 3 * 1024 * 1024)));
+    var glyf = Glyf.new(tables_mapping.get(.@"glyf") orelse return error.Glyf, cmap, loca, maxp, content);
 
     const hmtx = tables_mapping.get(.@"hmtx") orelse return error.Hmtx;
     const name = tables_mapping.get(.@"name") orelse return error.Name;
@@ -98,7 +98,7 @@ const flag = true;
 
 fn write_to_buffer(glyf: *Glyf, char: u8, allocator: std.mem.Allocator) ![]u8 {
     const start = try std.time.Instant.now();
-    const glyph = try glyf.get(char);
+    const glyph = try glyf.get(char, allocator);
     const glyph_end = try std.time.Instant.now();
     const buffer = try allocator.alloc(u8, glyph.bitmap.len * (3 * 3 + 3) + 100);
 
