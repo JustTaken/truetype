@@ -59,15 +59,6 @@ const SimpleGlyph = struct {
         CounterClockwise,
     };
 
-    const Intersection = struct {
-        x: i16,
-        dir: i16,
-
-        fn eql(self: Intersection, other: Intersection) bool {
-            return self.x == other.x and sign(self.dir) == sign(other.dir);
-        } 
-    };
-
     const Bezier = struct {
         fn contourOutline(
             raw_points: []Point,
@@ -131,9 +122,8 @@ const SimpleGlyph = struct {
             }
         }
 
-        fn findXIntersections(curve: []Point, height: i16, allocator: std.mem.Allocator) error{OutOfMemory}![]Intersection {
-            var intersections = try std.ArrayList(Intersection).initCapacity(allocator, 10);
-            // std.debug.print("trying: {}\n", .{height});
+        fn findXIntersections(curve: []Point, height: i16, allocator: std.mem.Allocator) error{OutOfMemory}![]i16 {
+            var intersections = try std.ArrayList(i16).initCapacity(allocator, 10);
 
             var i: usize = 0;
             while (i < curve.len) : (i += 1) {
@@ -149,10 +139,10 @@ const SimpleGlyph = struct {
                 if (current.y <= height and prev.y <= height) continue;
                 if (current.y >= height and prev.y >= height) continue;
 
-                const coef = @as(f32, @floatFromInt(height - prev.y)) / @as(f32, @floatFromInt(next.y - prev.y));
-                const x = std.math.lerp(@as(f32, @floatFromInt(prev.x)), @as(f32, @floatFromInt(next.x)), coef);
+                const coef = @as(f32, @floatFromInt(next.x - prev.x)) / @as(f32, @floatFromInt(next.y - prev.y));
+                const x = prev.x + @as(i16, @intFromFloat(@as(f32, @floatFromInt(height - prev.y)) * coef));
 
-                try intersections.append(.{ .x = @intFromFloat(x), .dir = next.y - prev.y });
+                try intersections.append(x);
             }
 
             return intersections.items;
@@ -294,7 +284,6 @@ const SimpleGlyph = struct {
             orientations[i] = Bezier.contourOrientation(contours[i]);
 
             for (0..contours[i].len) |k| {
-                // self.writeDot(contours[i][k], MAX_RAD, FILL_BYTE);
                 self.writeLine(contours[i][k], contours[i][(k + 1) % contours[i].len], FILL_BYTE);
             }
         }
@@ -310,17 +299,14 @@ const SimpleGlyph = struct {
                 defer fixedAllocator.reset();
 
                 const contour = contours[i];
-                const orientation = orientations[i];
 
-                try pushIntersection(
-                    &line_xs,
-                    try Bezier.findXIntersections(contour, @intCast(y), curveAllocator),
-                    orientation,
-                );
+                const xs = try Bezier.findXIntersections(contour, @intCast(y), curveAllocator);
+                std.debug.assert(xs.len % 2 == 0);
+
+                try line_xs.appendSlice(xs);
             }
 
             if (line_xs.items.len == 0) continue;
-            std.debug.assert(line_xs.items.len % 2 == 0);
             std.mem.sort(i16, line_xs.items, .{}, less);
 
             const height: i32 = @intCast(y * self.width);
@@ -332,46 +318,6 @@ const SimpleGlyph = struct {
         }
 
         return self;
-    }
-
-    fn pushIntersection(line_intersections: *std.ArrayList(i16), contour_intersections: []Intersection, _: Orientation) error{OutOfMemory}!void {
-        if (contour_intersections.len == 0) return;
-
-        var prev: ?Intersection = contour_intersections[contour_intersections.len - 1];
-        for (contour_intersections) |i| {
-            if (prev) |p| if (i.eql(p)) continue;
-
-            try line_intersections.append(i.x);
-            prev = i;
-        }
-    }
-
-    fn writeDot(self: *SimpleGlyph, pos: Point, rad: u32, alpha: u8) void {
-        self.addAndWrite(pos.x, pos.y, 0, 0, alpha);
-
-        for (1..rad + 1) |r| {
-            const i_r: i32 = @intCast(r);
-
-            self.addAndWrite(pos.x, pos.y, i_r, 0, alpha);
-            self.addAndWrite(pos.x, pos.y, -i_r, 0, alpha);
-
-            self.addAndWrite(pos.x, pos.y, 0, i_r, alpha);
-            self.addAndWrite(pos.x, pos.y, 0, -i_r, alpha);
-
-            for (1..r + 1) |k| {
-                const ii: i32 = @intCast(k);
-
-                self.addAndWrite(pos.x, pos.y, i_r, ii, alpha);
-                self.addAndWrite(pos.x, pos.y, i_r, -ii, alpha);
-                self.addAndWrite(pos.x, pos.y, -i_r, ii, alpha);
-                self.addAndWrite(pos.x, pos.y, -i_r, -ii, alpha);
-
-                self.addAndWrite(pos.x, pos.y, ii, i_r, alpha);
-                self.addAndWrite(pos.x, pos.y, -ii, i_r, alpha);
-                self.addAndWrite(pos.x, pos.y, ii, -i_r, alpha);
-                self.addAndWrite(pos.x, pos.y, -ii, -i_r, alpha);
-            }
-        }
     }
 
     fn writeLine(self: *SimpleGlyph, first: Point, second: Point, alpha: u8) void {
