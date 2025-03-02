@@ -378,11 +378,6 @@ const SimpleGlyph = struct {
         const width: u32 = @intCast(r_x.toInt());
         const height = r_y.multRound(self.width);
 
-        // const u_width: u32 = @intCast(self.width.toInt());
-        if (width >= self.width.toInt()) {
-            @panic("VSF");
-        }
-
         self.bitmap[height + width] = b;
     }
 };
