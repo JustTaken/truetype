@@ -66,6 +66,10 @@ pub const FFloat = struct {
         return self.handle < other.handle;
     }
 
+    pub fn lti(self: FFloat, other: FFloat) bool {
+        return self.handle < other.handle;
+    }
+
     pub fn eq(self: FFloat, other: FFloat) bool {
         return std.math.approxEqRel(f32, self.handle, other.handle, 0.0001);
     }
@@ -82,7 +86,7 @@ pub const Fixed = packed struct {
     float: u16,
     int: u16,
 
-    const MAX: u32 = std.math.maxInt(u16);
+    const MAX: u16 = std.math.maxInt(u16);
 
     pub fn new(int: i16, neg: bool, float: u16) Fixed {
         var i: u16 = if (int < 0) @intCast(-int) else @intCast(int);
@@ -98,7 +102,9 @@ pub const Fixed = packed struct {
         const int: i16 = @intFromFloat(f);
         const float = (f - @as(f32, @floatFromInt(int))) * @as(f32, @floatFromInt(MAX));
 
-        return Fixed.new(int, int < 0 or float < 0, abs(@intFromFloat(float)));
+        const i = Fixed.new(int, int < 0 or float < 0, @intCast(abs(@intFromFloat(float))));
+        // std.debug.print("from float: {}, -> {}\n", .{f, i});
+        return i;
     }
 
     pub fn toInt(self: Fixed) i16 {
@@ -106,21 +112,18 @@ pub const Fixed = packed struct {
         var int: i16 = @intCast(self.value());
         int *= s;
 
-        // std.debug.print("sign to int: {}\n", .{int});
-
         if (self.float > MAX / 2) {
             int += s;
         }
-        // std.debug.print("sign to int: {}\n", .{int});
 
         return int;
     }
 
-    fn value(self: Fixed) u16 {
+    pub fn value(self: Fixed) u16 {
         return self.int & (~SIGN_BIT);
     }
 
-    fn sign(self: Fixed) i16 {
+    pub fn sign(self: Fixed) i16 {
         return if (self.int & SIGN_BIT != 0) -1 else 1;
     }
 
@@ -128,51 +131,41 @@ pub const Fixed = packed struct {
         const self_sign = self.sign();
         const other_sign = other.sign();
 
-        var int: isize = @as(i32, @intCast(self.value())) * self_sign;
+        var int: i32 = @as(i32, @intCast(self.value())) * self_sign;
 
         int += @as(i32, @intCast(other.value())) * other_sign;
         int *= @intCast(MAX);
-        int += @as(isize, @intCast(self.float)) * self_sign;
-        int += @as(isize, @intCast(other.float)) * other_sign;
+        int += @as(i32, @intCast(self.float)) * self_sign;
+        int += @as(i32, @intCast(other.float)) * other_sign;
 
         const neg = int < 0;
-        var float: u16 = @intCast(@mod(int, @as(i32, @intCast(MAX))));
+        const i = abs(int);
+        const float: u16 = @intCast(i % MAX);
 
-        if (self_sign != other_sign and self.float < other.float and neg) {
-            float = @intCast(MAX - float);
-        }
-
-        int = @divTrunc(int, @as(i32, @intCast(MAX)));
-
-        return Fixed.new(@intCast(int), neg, float);
+        return Fixed.new(@intCast(i / MAX), neg, float);
     }
 
     pub fn sub(self: Fixed, other: Fixed) Fixed {
         const self_sign = self.sign();
         const other_sign = other.sign();
 
-        var int: isize = @as(i32, @intCast(self.value())) * self_sign;
+        var int: i32 = @as(i32, @intCast(self.value())) * self_sign;
 
         int -= @as(i32, @intCast(other.value())) * other_sign;
         int *= @intCast(MAX);
-        int += @as(isize, @intCast(self.float)) * self_sign;
-        int -= @as(isize, @intCast(other.float)) * other_sign;
-
-        // std.debug.print("int: {}\n", .{int});
+        int += @as(i32, @intCast(self.float)) * self_sign;
+        int -= @as(i32, @intCast(other.float)) * other_sign;
 
         const neg = int < 0;
-        var float: u16 = @intCast(@mod(int, @as(i32, @intCast(MAX))));
+        const i = abs(int);
+        const float: u16 = @intCast(i % MAX);
 
-        // std.debug.print("float: {}\n", .{float});
-        if (self_sign == other_sign and other.float > self.float and neg) {
-            float = @intCast(MAX - float);
-        }
+        // if (neg) {
+        //     float = @intCast(MAX - float);
+        // }
 
-        int = @divTrunc(int, @as(i32, @intCast(MAX)));
-        // std.debug.print("int: {}, float: {}\n", .{int, float});
-        const i = Fixed.new(@intCast(int), neg, @intCast(float));
-        // std.debug.print("i ----: {}\n", .{i});
-        return i;
+        // int = @divTrunc(int, @as(i32, @intCast(MAX)));
+        return Fixed.new(@intCast(i / MAX), neg, float);
     }
 
     pub fn multRound(self: Fixed, other: Fixed) u32 {
@@ -227,12 +220,16 @@ pub const Fixed = packed struct {
 
     pub fn gt(self: Fixed, other: Fixed) bool {
         if (self.int == other.int) return self.float > other.float;
-        return self.int > other.int;
+        return self.value() > other.value();
+    }
+
+    pub fn lti(self: Fixed, other: Fixed) bool {
+        return self.toInt() < other.toInt();
     }
 
     pub fn lt(self: Fixed, other: Fixed) bool {
         if (self.int == other.int) return self.float < other.float;
-        return self.int < other.int;
+        return self.value() < other.value();
     }
 
     pub fn eq(self: Fixed, other: Fixed) bool {
@@ -244,53 +241,63 @@ pub const Fixed = packed struct {
         _ = options;
 
         const float: u32 = self.float;
-        try writer.print("[{s}{}.{d:0>4}]", .{if (self.sign() < 0) "-" else "", self.value(), float * 10000 / MAX});
+        try writer.print("[{s}{}.{d:0>4}] ({})", .{if (self.sign() < 0) "-" else "", self.value(), float * 10000 / MAX, float});
     }
 };
 
-fn abs(n: i32) u16 {
+fn abs(n: i32) u32 {
     return if (n < 0) @intCast(-n) else @intCast(n);
 }
 
 const SIGN_BIT: u16 = 0b1000000000000000;
 
 test "sub no decimal" {
-    const float = 0.0;
-    const float2 = 224.00;
-    // const first = Fixed.new(199, false, 0);
-    const first = Fixed.fromFloat(float);
-    const second = Fixed.fromFloat(float2);
-    // const third = Fixed.new(600, false, 0);
-    // const fourth = Fixed.fromFloat(float2);
-    const result = first.sub(second);
-    std.debug.print("result: {}\n", .{result});
-    // std.debug.print("int: {}, result_float: {}\n", .{result.toInt(), result.float});
+    const first = Fixed.fromFloat(0.0);
+    const second = Fixed.fromFloat(224.00);
 
-    // std.debug.print("{} -> {} + {}\n", .{result});
-    // std.debug.print("{} -> {} * {}\n", .{second.mul(fourth), second, fourth});
-    // std.debug.print("{} -> {} + {}\n", .{first.sum(fourth), first, fourth});
-    // std.debug.print("{} -> {} + {}\n", .{first.sum(third), first, third});
-    // std.debug.print("{} -> {} - {}\n", .{first.sub(third), first, third});
-    // std.debug.print("{}\n", .{Fixed.fromFloat(5.55)});
+    std.debug.print("result: {}\n", .{first.sub(second)});
+}
+
+test "sub neg" {
+    const first = Fixed.new(0, true, 2907);
+    const second = Fixed.new(2, true, 145);
+
+    std.debug.print("result: {} ({} + {})\n", .{first.sum(second), first, second});
 }
 
 test "sub with decimal" {
-    const float = 0.0;
-    const float2 = 4.1065;
-    // const first = Fixed.new(199, false, 0);
-    const first = Fixed.fromFloat(float);
-    const second = Fixed.fromFloat(float2);
-    const result = first.sub(second);
-    std.debug.print("result: {}\n", .{result});
+    const first = Fixed.fromFloat(0.0);
+    const second = Fixed.fromFloat(4.1065);
+
+    std.debug.print("result: {}\n", .{first.sub(second)});
 }
 
 test "sum second neg" {
-    const float = 0.0;
-    const float2 = -4.1065;
-    // const first = Fixed.new(199, false, 0);
-    const first = Fixed.fromFloat(float);
-    const second = Fixed.fromFloat(float2);
-    const result = first.sum(second);
-    std.debug.print("result: {}\n", .{result});
+    const first = Fixed.fromFloat(0.0);
+    const second = Fixed.fromFloat(-4.1065);
+
+    std.debug.print("result: {}\n", .{first.sum(second)});
 }
 
+test "sub first neg" {
+    const first = Fixed.fromFloat(-169.6318);
+    const second = Fixed.fromFloat(-168.0);
+
+    std.debug.print("result: {}\n", .{first.sub(second)});
+}
+
+test "sum first neg" {
+    const first = Fixed.fromFloat(-105.0);
+    const second = Fixed.fromFloat(0.0);
+
+    std.debug.print("result: {}\n", .{first.sum(second)});
+}
+
+test "sum first neg and sec pos" {
+    const first = Fixed.fromFloat(-105.0);
+    const second = Fixed.fromFloat(0.20);
+
+    std.debug.print("result: {}\n", .{first.sum(second)});
+}
+
+//([425.3656], [-169.6318]) from -> { ([517.0000], [-153.0000]), ([486.0000], [-161.0000]), ([446.0000], [-168.0000]), ([420.0000], [-168.0000]) }, width: [548.0000] height: [983.0000]

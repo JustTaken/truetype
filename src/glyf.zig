@@ -7,14 +7,17 @@ const Loca = @import("loca.zig").Loca;
 const Cmap = @import("cmap.zig").Cmap;
 const MaxP = @import("maxp.zig").MaxP;
 
-const Fixed = @import("fixed.zig").Fixed;
 // const Fixed = @import("fixed.zig").FFloat;
+const Fixed = @import("fixed.zig").Fixed;
 const ZERO = Fixed.new(0, false, 0);
 
 const DIV: u16 = 1;
 const MAX_RAD: u32 = 3;
 const INTERPOLATIONS: u32 = 15;
 const FILL_BYTE: u8 = 255;
+
+var superwith = Fixed.new(0, false, 0);
+var superheight = Fixed.new(0, false, 0);
 
 const GlyphKind = enum(i16) {
     Simple,
@@ -66,7 +69,7 @@ const SimpleGlyph = struct {
             _ = fmt;
             _ = options;
 
-            try writer.print("{}, {}", .{self.x, self.y});
+            try writer.print("({}, {})", .{self.x, self.y});
         }
     };
 
@@ -129,8 +132,15 @@ const SimpleGlyph = struct {
 
                 for (0..raw_points.len) |i| {
                     point.sum(calculateSum(t, @intCast(n - i), @intCast(i), binomial(n, i), raw_points[i]));
+                    // std.debug.print("{}\n", .{point});
                 }
 
+                // std.debug.print("{any} from -> {any}, width: {} height: {}\n", .{point, raw_points, superwith, superheight});
+                // std.debug.assert(superwith.gt(point.x) and superheight.gt(point.y));
+
+                if (point.y.value() == 169 and point.y.sign() == -1) {
+                    std.debug.assert(false);
+                }
                 try points.append(point);
             }
         }
@@ -143,6 +153,8 @@ const SimpleGlyph = struct {
 
             const x = point.x.mul(mult);
             const y = point.y.mul(mult);
+
+            // std.debug.print("x: {} y: {}, from: {}\n", .{x, y, point});
 
             return .{
                 .x = x,
@@ -165,12 +177,13 @@ const SimpleGlyph = struct {
                     current = curve[(i + 1) % curve.len];
                 }
 
-
                 if (!current.y.gt(f_height) and !prev.y.gt(f_height)) continue;
                 if (!current.y.lt(f_height) and !prev.y.lt(f_height)) continue;
 
                 const coef = next.x.sub(prev.x).div(next.y.sub(prev.y));
                 const x = prev.x.sum(coef.mul(f_height.sub(prev.y)));
+
+                // std.debug.print("found: {}, prev: {}, next: {}\n", .{x, prev, next});
 
                 try intersections.append(x);
             }
@@ -227,6 +240,8 @@ const SimpleGlyph = struct {
         self.width = Fixed.new(description.x_max - description.x_min + 1, false, 0);
         self.height = Fixed.new(description.y_max - description.y_min + 1, false, 0);
         self.bitmap = try allocator.alloc(u8, @intCast(self.width.multRound(self.height)));
+        superwith = self.width;
+        superheight = self.height;
 
         @memset(self.bitmap, 0);
 
@@ -267,7 +282,10 @@ const SimpleGlyph = struct {
 
         var accX = Fixed.new(0, false, 0);
         for (flags, 0..) |flag, i| {
-            accX = accX.sum(coordinateFromFlag(reader, flag.x_short_vector, flag.x_is_same));
+            const x = coordinateFromFlag(reader, flag.x_short_vector, flag.x_is_same);
+            // std.debug.print("y + accX = {} + {} = ", .{x, accX});
+            accX = accX.sum(x);
+            // std.debug.print("{}\n", .{accX});
             coodinate_points[i].x = accX;
 
             on_curve[i] = flag.on_curve;
@@ -275,9 +293,16 @@ const SimpleGlyph = struct {
 
         var accY = Fixed.new(0, false, 0);
         for (flags, 0..) |flag, i| {
-            accY = accY.sum(coordinateFromFlag(reader, flag.y_short_vector, flag.y_is_same));
+            const y = coordinateFromFlag(reader, flag.y_short_vector, flag.y_is_same);
+            // std.debug.print("y + accY = {} + {} = ", .{y, accY});
+            accY = accY.sum(y);
+            // std.debug.print("{}\n", .{accY});
             coodinate_points[i].y = accY;
         }
+
+        // for (coodinate_points) |point| {
+        //     std.debug.print("({})\n", .{point});
+        // }
 
         const contours = try allocator.alloc([]Point, number_of_contours);
         const orientations = try allocator.alloc(Orientation, number_of_contours);
@@ -296,8 +321,10 @@ const SimpleGlyph = struct {
             );
 
             for (contours[i]) |*point| {
+                // std.debug.print("point transform: {} -> ", .{point.*});
                 point.addCoords(-description.x_min, -description.y_min);
                 point.scale(DIV);
+                // std.debug.print("{}, ({}, {})\n", .{point.*, description.x_min, description.y_min});
             }
 
             orientations[i] = Bezier.contourOrientation(contours[i]);
@@ -328,6 +355,7 @@ const SimpleGlyph = struct {
             if (line_xs.items.len == 0) continue;
             std.mem.sort(Fixed, line_xs.items, .{}, less);
 
+            // std.debug.print("line: {d}\n", .{line_xs.items});
             const height = y * @as(u32, @intCast(self.width.toInt()));
             for (0..line_xs.items.len / 2) |x| {
                 const index = x * 2;
@@ -371,8 +399,10 @@ const SimpleGlyph = struct {
         const r_x = x.sum(deltaX);
         const r_y = y.sum(deltaY);
 
-        if (r_x.lt(ZERO) or r_y.lt(ZERO) or !self.height.gti(r_y) or !self.width.gti(r_x)) return;
+        if (r_x.lti(ZERO) or r_y.lti(ZERO) or !self.height.gti(r_y) or !self.width.gti(r_x)) return;
 
+        // std.debug.assert(r_x.toInt() > 0 and r_y.toInt() > 0);
+        // std.debug.print("{}, {}\n", .{r_x.toInt(), r_y.toInt()});
         const width: u32 = @intCast(r_x.toInt());
         const height = r_y.multRound(self.width);
 
