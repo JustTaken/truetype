@@ -8,10 +8,12 @@ const Cmap = @import("cmap.zig").Cmap;
 const MaxP = @import("maxp.zig").MaxP;
 
 const Fixed = @import("fixed.zig").Fixed;
+// const Fixed = @import("fixed.zig").FFloat;
+const ZERO = Fixed.new(0, false, 0);
 
 const DIV: u16 = 1;
 const MAX_RAD: u32 = 3;
-const INTERPOLATIONS: u32 = 8;
+const INTERPOLATIONS: u32 = 15;
 const FILL_BYTE: u8 = 255;
 
 const GlyphKind = enum(i16) {
@@ -44,20 +46,27 @@ const SimpleGlyph = struct {
         y: Fixed,
 
         fn scale(self: *Point, n: usize) void {
-            const i_n = Fixed.new(@intCast(n), 0);
+            const i_n = Fixed.new(@intCast(n), false, 0);
 
             self.x = self.x.div(i_n);
             self.y = self.y.div(i_n);
         }
 
         fn addCoords(self: *Point, x: i16, y: i16) void {
-            self.x = self.x.sum(Fixed.new(x, 0));
-            self.y = self.y.sum(Fixed.new(y, 0));
+            self.x = self.x.sum(Fixed.new(x, false, 0));
+            self.y = self.y.sum(Fixed.new(y, false, 0));
         }
 
         fn sum(self: *Point, other: Point) void {
             self.x = self.x.sum(other.x);
             self.y = self.y.sum(other.y);
+        }
+
+        pub fn format(self: Point, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+
+            try writer.print("{}, {}", .{self.x, self.y});
         }
     };
 
@@ -116,7 +125,7 @@ const SimpleGlyph = struct {
             for (0..interpolations) |_| {
                 defer t += delta;
 
-                var point = Point{ .x = Fixed.new(0, 0), .y = Fixed.new(0, 0) };
+                var point = Point{ .x = Fixed.new(0, false, 0), .y = Fixed.new(0, false, 0) };
 
                 for (0..raw_points.len) |i| {
                     point.sum(calculateSum(t, @intCast(n - i), @intCast(i), binomial(n, i), raw_points[i]));
@@ -126,9 +135,24 @@ const SimpleGlyph = struct {
             }
         }
 
+        fn calculateSum(t: f32, t_neg_exp: u32, t_exp: u32, cof: f32, point: Point) Point {
+            const t_exp_neg_result = std.math.pow(f32, (1 - t), @floatFromInt(t_neg_exp));
+            const t_exp_result = std.math.pow(f32, t, @floatFromInt(t_exp));
+
+            const mult = Fixed.fromFloat(t_exp_neg_result * t_exp_result * cof);
+
+            const x = point.x.mul(mult);
+            const y = point.y.mul(mult);
+
+            return .{
+                .x = x,
+                .y = y,
+            };
+        }
+
         fn findXIntersections(curve: []Point, height: i16, allocator: std.mem.Allocator) error{OutOfMemory}![]Fixed {
             var intersections = try std.ArrayList(Fixed).initCapacity(allocator, 10);
-            const f_height = Fixed.new(height, 0);
+            const f_height = Fixed.new(height, false, 0);
 
             var i: usize = 0;
             while (i < curve.len) : (i += 1) {
@@ -141,13 +165,12 @@ const SimpleGlyph = struct {
                     current = curve[(i + 1) % curve.len];
                 }
 
+
                 if (!current.y.gt(f_height) and !prev.y.gt(f_height)) continue;
                 if (!current.y.lt(f_height) and !prev.y.lt(f_height)) continue;
 
                 const coef = next.x.sub(prev.x).div(next.y.sub(prev.y));
                 const x = prev.x.sum(coef.mul(f_height.sub(prev.y)));
-                // const coef = @as(f32, @floatFromInt(next.x - prev.x)) / @as(f32, @floatFromInt(next.y - prev.y));
-                // const x = prev.x + @as(i16, @intFromFloat(@as(f32, @floatFromInt(height - prev.y)) * coef));
 
                 try intersections.append(x);
             }
@@ -160,25 +183,13 @@ const SimpleGlyph = struct {
             for (0..outline.len) |i| {
                 const current = outline[i];
                 const next = outline[(i + 1) % outline.len];
-                const y: i32 = @divFloor((next.y.to_int() + current.y.to_int()), 2);
-                const xdif: i32 = next.x.to_int() - current.x.to_int();
+                const y: i32 = @divFloor((next.y.toInt() + current.y.toInt()), 2);
+                const xdif: i32 = next.x.toInt() - current.x.toInt();
 
                 sum += y * xdif;
             }
 
             return if (sum > 0) .Clockwise else .CounterClockwise;
-        }
-
-        fn calculateSum(t: f32, t_neg_exp: u32, t_exp: u32, cof: f32, point: Point) Point {
-            const t_exp_neg_result = std.math.pow(f32, (1 - t), @floatFromInt(t_neg_exp));
-            const t_exp_result = std.math.pow(f32, t, @floatFromInt(t_exp));
-
-            const mult = Fixed.fromFloat(t_exp_neg_result * t_exp_result * cof);
-
-            return .{
-                .x = mult.mul(point.x),
-                .y = mult.mul(point.y),
-            };
         }
     };
 
@@ -196,12 +207,12 @@ const SimpleGlyph = struct {
     fn coordinateFromFlag(reader: *ByteReader, short: bool, same: bool) Fixed {
         return switch (short) {
             true => switch (same) {
-                true => Fixed.new(@intCast(reader.readValue(u8)), 0),
-                false => Fixed.new(-@as(i16, @intCast(reader.readValue(u8))), 0),
+                true => Fixed.new(@intCast(reader.readValue(u8)), false, 0),
+                false => Fixed.new(@as(i16, @intCast(reader.readValue(u8))), true, 0),
             },
             false => switch (same) {
-                true => Fixed.new(0, 0),
-                false => Fixed.new(reader.readValue(i16), 0),
+                true => Fixed.new(0, false, 0),
+                false => Fixed.new(reader.readValue(i16), false, 0),
             },
         };
     }
@@ -213,9 +224,9 @@ const SimpleGlyph = struct {
     ) error{OutOfMemory}!SimpleGlyph {
         var self: SimpleGlyph = undefined;
 
-        self.width = Fixed.new(description.x_max - description.x_min + 1, 0);
-        self.height = Fixed.new(description.y_max - description.y_min + 1, 0);
-        self.bitmap = try allocator.alloc(u8, @intCast(self.width.multInt(self.height)));
+        self.width = Fixed.new(description.x_max - description.x_min + 1, false, 0);
+        self.height = Fixed.new(description.y_max - description.y_min + 1, false, 0);
+        self.bitmap = try allocator.alloc(u8, @intCast(self.width.multRound(self.height)));
 
         @memset(self.bitmap, 0);
 
@@ -254,7 +265,7 @@ const SimpleGlyph = struct {
             count -= 1;
         }
 
-        var accX = Fixed.new(0, 0);
+        var accX = Fixed.new(0, false, 0);
         for (flags, 0..) |flag, i| {
             accX = accX.sum(coordinateFromFlag(reader, flag.x_short_vector, flag.x_is_same));
             coodinate_points[i].x = accX;
@@ -262,7 +273,7 @@ const SimpleGlyph = struct {
             on_curve[i] = flag.on_curve;
         }
 
-        var accY = Fixed.new(0, 0);
+        var accY = Fixed.new(0, false, 0);
         for (flags, 0..) |flag, i| {
             accY = accY.sum(coordinateFromFlag(reader, flag.y_short_vector, flag.y_is_same));
             coodinate_points[i].y = accY;
@@ -284,9 +295,9 @@ const SimpleGlyph = struct {
                 allocator,
             );
 
-            for (contours[i]) |*line| {
-                line.addCoords(-description.x_min, -description.y_min);
-                line.scale(DIV);
+            for (contours[i]) |*point| {
+                point.addCoords(-description.x_min, -description.y_min);
+                point.scale(DIV);
             }
 
             orientations[i] = Bezier.contourOrientation(contours[i]);
@@ -300,7 +311,7 @@ const SimpleGlyph = struct {
         const curveAllocator = fixedAllocator.allocator();
 
         var line_xs = try std.ArrayList(Fixed).initCapacity(allocator, 30);
-        for (0..@intCast(self.height.to_int())) |y| {
+        for (0..@intCast(self.height.toInt())) |y| {
             defer line_xs.clearRetainingCapacity();
 
             for (0..number_of_contours) |i| {
@@ -317,12 +328,13 @@ const SimpleGlyph = struct {
             if (line_xs.items.len == 0) continue;
             std.mem.sort(Fixed, line_xs.items, .{}, less);
 
-            const height = Fixed.new(@intCast(y), 0).multInt(self.width);
+            const height = y * @as(u32, @intCast(self.width.toInt()));
             for (0..line_xs.items.len / 2) |x| {
                 const index = x * 2;
 
-                const x1: u32 = @intCast(line_xs.items[index].to_int());
-                const x2: u32 = @intCast(line_xs.items[index + 1].to_int());
+                const x1: u32 = @intCast(line_xs.items[index].toInt());
+                const x2: u32 = @intCast(line_xs.items[index + 1].toInt());
+
                 @memset(self.bitmap[height + x1..height + x2 + 1], FILL_BYTE);
             }
         }
@@ -335,20 +347,19 @@ const SimpleGlyph = struct {
 
         const dx = second.x.sub(first.x);
         const dy = second.y.sub(first.y);
-        const dx_int = dx.to_int();
-        const dy_int = dy.to_int();
 
-        if (dx_int == 0 and dy_int == 0) return;
+        if (dx.eq(ZERO) and dy.eq(ZERO)) return;
+
+        const dx_int = dx.toInt();
+        const dy_int = dy.toInt();
 
         const ind: Independent = if (abs(dx_int) > abs(dy_int)) .X else .Y;
         const coef = if (ind == .X) dy.div(dx) else dx.div(dy);
 
-        const d_max = max(dx_int, dy_int);
-        const sig: i16 = if (d_max > 0) 1 else -1;
+        const d_max = if (ind == .X) dx_int else dy_int;
 
-        for (0..abs(d_max)) |i| {
-            const ii = Fixed.new(@as(i16, @intCast(i)) * sig, 0);
-
+        for (0..abs(d_max) + 1) |i| {
+            const ii = Fixed.new(@as(i16, @intCast(i)), (d_max < 0), 0);
             const deltaX = if (ind == .X) ii else coef.mul(ii);
             const deltaY = if (ind == .Y) ii else coef.mul(ii);
 
@@ -359,14 +370,13 @@ const SimpleGlyph = struct {
     fn addAndWrite(self: *SimpleGlyph, x: Fixed, y: Fixed, deltaX: Fixed, deltaY: Fixed, b: u8) void {
         const r_x = x.sum(deltaX);
         const r_y = y.sum(deltaY);
-        const zero = Fixed.new(0, 0);
 
-        if (r_x.lt(zero) or r_y.lt(zero) or !r_y.lt(self.height) or !r_x.lt(self.width)) return;
+        if (r_x.lt(ZERO) or r_y.lt(ZERO) or !self.height.gti(r_y) or !self.width.gti(r_x)) return;
 
-        // const u_x: u32 = @intCast(r_x);
-        // const u_y: u32 = @intCast(r_y);
+        const width: u32 = @intCast(r_x.toInt());
+        const height = r_y.multRound(self.width);
 
-        self.bitmap[r_y.multInt(self.width) + @as(u32, @intCast(r_x.to_int()))] = b;
+        self.bitmap[height + width] = b;
     }
 };
 

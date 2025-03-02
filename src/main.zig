@@ -102,8 +102,8 @@ fn write_to_buffer(glyf: *Glyf, char: u8, allocator: std.mem.Allocator) ![]u8 {
     const glyph_end = try std.time.Instant.now();
     const buffer = try allocator.alloc(u8, glyph.bitmap.len * (3 * 3 + 3) + 100);
 
-    const height: u32 = @intCast(glyph.height.to_int());
-    const width: u32 = @intCast(glyph.width.to_int());
+    const height: u32 = @intCast(glyph.height.toInt());
+    const width: u32 = @intCast(glyph.width.toInt());
 
     const header = try std.fmt.bufPrint(buffer, "P3\n{} {}\n255\n", .{width, height});
     var len: usize = header.len;
