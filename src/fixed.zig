@@ -55,7 +55,7 @@ pub const FFloat = struct {
     }
 
     pub fn gti(self: FFloat, other: FFloat) bool {
-        return self.handle > other.handle;
+        return self.handle > other.handle + 0.6;
     }
 
     pub fn gt(self: FFloat, other: FFloat) bool {
@@ -67,7 +67,7 @@ pub const FFloat = struct {
     }
 
     pub fn lti(self: FFloat, other: FFloat) bool {
-        return self.handle < other.handle;
+        return self.handle + 0.6 < other.handle;
     }
 
     pub fn eq(self: FFloat, other: FFloat) bool {
@@ -103,7 +103,6 @@ pub const Fixed = packed struct {
         const float = (f - @as(f32, @floatFromInt(int))) * @as(f32, @floatFromInt(MAX));
 
         const i = Fixed.new(int, int < 0 or float < 0, @intCast(abs(@intFromFloat(float))));
-        // std.debug.print("from float: {}, -> {}\n", .{f, i});
         return i;
     }
 
@@ -187,13 +186,10 @@ pub const Fixed = packed struct {
         other_int *= MAX;
         other_int += other.float;
 
-        var int = (self_int * other_int) / MAX;
+        const int = (self_int * other_int) / MAX;
         const float = int % MAX;
-        // try writer.print("[{s}{}.{}]", .{if (self.sign() < 0) "-" else "", self.value(), });
-        // std.debug.print("self: {}, other: {}, float: {}\n", .{self_int, other_int, float * 10000 / MAX});
-        int /= MAX;
 
-        return Fixed.new(@as(i16, @intCast(int)), self.sign() * other.sign() < 0, @intCast(float));
+        return Fixed.new(@as(i16, @intCast(int / MAX)), self.sign() * other.sign() < 0, @intCast(float));
     }
 
     pub fn div(self: Fixed, other: Fixed) Fixed {
