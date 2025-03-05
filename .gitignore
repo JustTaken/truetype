@@ -1,6 +1,5 @@
 /assets
-/.zig-cache
-/zig-out
 shell.nix
-/images
 .envrc
+/testing
+/build
