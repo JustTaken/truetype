@@ -246,20 +246,12 @@ Compound_Glyph :: struct {
     instructions: []u8,
 }
 
-Contour_Orientation :: enum(u8) {
-    Clockwise,
-    CounterClockwise,
-}
-
 Point :: [2]f32
 
-Contour :: struct {
-    points: []Point,
-    orientation: Contour_Orientation,
-}
+Contour :: []Point
 
 Contour_Intersection :: struct {
-    contour_orientation: Contour_Orientation,
+    line_orientation: i32,
     contour_id: u8,
     x_coord: u32,
 }
@@ -833,8 +825,8 @@ get_simple_glyph_contours :: proc(glyph: ^Simple_Glyph, allocator := context.all
             }
         }
 
-        orientation: Contour_Orientation = .Clockwise if orientation_sum > 0 else .CounterClockwise
-        contours[contour_index] = Contour { contour_points[:], orientation }
+        // orientation: Contour_Orientation = .Clockwise if orientation_sum > 0 else .CounterClockwise
+        contours[contour_index] = contour_points[:]
     }
 
     return
@@ -843,8 +835,6 @@ get_simple_glyph_contours :: proc(glyph: ^Simple_Glyph, allocator := context.all
 get_compound_glyph_contours :: proc(glyph: ^Compound_Glyph, glyf: ^Glyf_Table, loca: ^Loca_Table, allocator := context.allocator) -> (contours: []Contour, err: mem.Allocator_Error) {
     contour_array := make([dynamic]Contour, 0, 10, allocator) or_return
 
-    // total_height: u32 = 0
-    // total_width: u32 = 0
     for component in glyph.components {
         inner_glyph: Glyph
         f_err: Font_Error
@@ -932,24 +922,27 @@ contours_bitmap_write_line :: proc(bitmap: ^Contours_Bitmap, start, end: Point) 
     }
 }
 
-find_matching_intersection :: proc(index: u32, intersections: []Contour_Intersection) -> (end: u32, use: bool) {
-    for i in index + 1..<u32(len(intersections)) {
-        if intersections[i].contour_orientation != intersections[index].contour_orientation {
-            return u32(i), true
-        }
+find_matching_intersections :: proc(intersections: []Contour_Intersection, ends: [][2]u32) -> [][2]u32 {
+    l: u32 = 0
+    sum: i32 = 0
 
-        if intersections[i].contour_id != intersections[index].contour_id {
-            continue
-        }
+    for i in 0..<u32(len(intersections)) {
+        sum += intersections[i].line_orientation
 
-        return u32(i), intersections[index].contour_orientation == .Clockwise && index % 2 == 0
+        if sum == 0 {
+            ends[l][1] = intersections[i].x_coord
+            l += 1
+        } else {
+            ends[l][0] = intersections[i].x_coord
+        }
     }
 
-    return u32(len(intersections)), false
+    return ends[0:l]
 }
 
 generate_contours_bitmap :: proc(bitmap: ^Contours_Bitmap, contours: []Contour, scale: f32 = 1.0, allocator := context.allocator) -> mem.Allocator_Error {
     bitmap.buffer = make([]u8, bitmap.width * bitmap.height, allocator) or_return
+    ends := make([][2]u32, 10, allocator) or_return
     intersections := make([dynamic]Contour_Intersection, 0, 20, allocator) or_return
 
     for y in 0..<bitmap.height {
@@ -957,51 +950,47 @@ generate_contours_bitmap :: proc(bitmap: ^Contours_Bitmap, contours: []Contour, 
         defer clear(&intersections)
 
         for i in 0..<len(contours) {
-            l := u32(len(contours[i].points))
+            l := u32(len(contours[i]))
 
             count: u32 = 0
             for count < l {
                 defer count += 1
 
-                prev := contours[i].points[count]
-                next := contours[i].points[(count + 1) % l]
+                prev := contours[i][count]
+                next := contours[i][(count + 1) % l]
                 current := next
 
                 for current.y == f_y {
                     count += 1
-                    current = contours[i].points[(count + 1) % l]
+                    current = contours[i][(count + 1) % l]
                 }
 
                 if (current.y <= f_y && prev.y <= f_y) || (current.y >= f_y && prev.y >= f_y) {
                     continue
                 }
 
+                dif := f_y - prev.y
                 intersection := Contour_Intersection {
-                    contour_orientation = contours[i].orientation,
+                    line_orientation = i32(math.sign(dif)),
                     contour_id = u8(i),
-                    x_coord = u32(prev.x + (f_y - prev.y) * (next.x - prev.x) / (next.y - prev.y)),
+                    x_coord = u32(prev.x + dif * (next.x - prev.x) / (next.y - prev.y)),
                 }
 
                 sorted_insert(&intersections, intersection) or_return
             }
         }
 
-        line_offset := y * bitmap.width
-        l := u32(len(intersections))
-        i := u32(0)
-        for i < l {
-            end, use := find_matching_intersection(i, intersections[:])
-            defer i = end
+        intersection_ends := find_matching_intersections(intersections[:], ends)
 
-            if use {
-                set(bitmap.buffer[line_offset + intersections[i].x_coord:line_offset + intersections[end].x_coord + 1], 255)
-            }
+        line_offset := y * bitmap.width
+        for inter in intersection_ends {
+            set(bitmap.buffer[line_offset + inter[0]:line_offset + inter[1] + 1], 255)
         }
     }
 
     for i in 0..<len(contours) {
-        for k in 0..<len(contours[i].points) {
-            contours_bitmap_write_line(bitmap, contours[i].points[k], contours[i].points[(k + 1) % len(contours[i].points)])
+        for k in 0..<len(contours[i]) {
+            contours_bitmap_write_line(bitmap, contours[i][k], contours[i][(k + 1) % len(contours[i])])
         }
     }
 
@@ -1111,4 +1100,3 @@ f2dot14_f32 :: proc(f: F2Dot14) -> f32 {
     // return u16(i16(i) + i16(frac) * i16((frac) >> 15) * -1)
     // return value
 }
-// ABCDEFGHIJKLMNOPQRSTUVEXYZabcdefghijklmnopqrstuvexyz
