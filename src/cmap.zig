@@ -48,7 +48,8 @@ const Format4 = struct {
                     var reader = ByteReader.new(self.glyph_index_array);
                     const index_offset = i + range_offset / 2 + (char - self.start_code[i]);
 
-                    return reader.readValueFromOffset(u16, @intCast(index_offset - self.id_range_offset.len));
+                    const index = reader.readValueFromOffset(u16, @intCast(index_offset - self.id_range_offset.len));
+                    return index;
                 },
             }
         }

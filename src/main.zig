@@ -43,15 +43,20 @@ const OffsetTable = packed struct {
 };
 
 pub fn main() !void {
-    const bytes = try std.heap.page_allocator.alloc(u8, 1024 * 1024 * 50);
-    var fixedAllocator = std.heap.FixedBufferAllocator.init(bytes);
-    const allocator = fixedAllocator.allocator();
-
-    var args = try std.process.argsWithAllocator(allocator);
+    var initial_bytes: [1024]u8 = undefined;
+    var intial_fixed_allocator = std.heap.FixedBufferAllocator.init(&initial_bytes);
+    var args = try std.process.argsWithAllocator(intial_fixed_allocator.allocator());
 
     _ = args.next() orelse return error.MissingExeName;
+    const megas = args.next() orelse return error.MissingMegaBytesToUse;
     const path = args.next() orelse return error.MissingArgument;
     const chars = args.next() orelse return error.MissingChars;
+
+    const mbytes = try std.fmt.parseInt(u32, megas, 10);
+
+    const bytes = try std.heap.page_allocator.alloc(u8, 1024 * 1024 * mbytes);
+    var fixedAllocator = std.heap.FixedBufferAllocator.init(bytes);
+    const allocator = fixedAllocator.allocator();
 
     const content = try readFile(path, allocator);
 
@@ -96,14 +101,14 @@ pub fn main() !void {
 
 const flag = true;
 
-fn write_to_buffer(glyf: *Glyf, char: u8, allocator: std.mem.Allocator) ![]u8 {
+pub fn write_to_buffer(glyf: *Glyf, char: u8, allocator: std.mem.Allocator) ![]u8 {
     const start = try std.time.Instant.now();
     const glyph = try glyf.get(char, allocator);
     const glyph_end = try std.time.Instant.now();
     const buffer = try allocator.alloc(u8, glyph.bitmap.len * (3 * 3 + 3) + 100);
 
-    const height: u32 = @intCast(glyph.height.toInt());
-    const width: u32 = @intCast(glyph.width.toInt());
+    const height: u32 = @intFromFloat(glyph.height);
+    const width: u32 = @intFromFloat(glyph.width);
 
     const header = try std.fmt.bufPrint(buffer, "P3\n{} {}\n255\n", .{width, height});
     var len: usize = header.len;
@@ -119,10 +124,13 @@ fn write_to_buffer(glyf: *Glyf, char: u8, allocator: std.mem.Allocator) ![]u8 {
     const end = try std.time.Instant.now();
     std.debug.print("glyph: {} ns, total: {} ns\n", .{glyph_end.since(start), end.since(start)});
 
+    // _ = &len;
+    // _ = start;
+    // _ = glyph_end;
     return buffer[0..len];
 }
 
-fn write_to_file(path: []const u8, buffer: []u8) !void {
+pub fn write_to_file(path: []const u8, buffer: []u8) !void {
     if (flag) {
         const file = std.fs.cwd().createFile(path, .{}) catch return error.Open;
         defer file.close();
@@ -130,7 +138,7 @@ fn write_to_file(path: []const u8, buffer: []u8) !void {
     }
 }
 
-fn readFile(path: []const u8, allocator: std.mem.Allocator) error{Read, Seek, Open, OutOfMemory}![]u8 {
+pub fn readFile(path: []const u8, allocator: std.mem.Allocator) error{Read, Seek, Open, OutOfMemory}![]u8 {
     const file = std.fs.cwd().openFile(path, .{}) catch return error.Open;
     defer file.close();
 
@@ -143,8 +151,7 @@ fn readFile(path: []const u8, allocator: std.mem.Allocator) error{Read, Seek, Op
         const len = file.read(content[end - count..]) catch return error.Read;
         defer count -= len;
 
-        if (len == 0) break;
-    }
+        if (len == 0) break; }
 
     if (count != 0) return error.Read;
 
